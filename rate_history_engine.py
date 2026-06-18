@@ -32,6 +32,14 @@ FED_HOLD_EVENTS: list[tuple[str, str]] = [
 ]
 
 TRADING_DAYS = 252
+FRED_START = "2024-06-01"
+PANEL_END = "2026-06-17"
+
+# Fill gaps when FRED daily CSV lags (e.g. BoJ/FOMC week)
+FRED_SUPPLEMENTS: dict[str, list[tuple[str, float]]] = {
+    "DFF": [("2026-06-17", 3.63)],
+    "DEXJPUS": [("2026-06-17", 160.24)],
+}
 
 
 def _parse_date_column(df: pd.DataFrame) -> pd.Series:
@@ -68,6 +76,100 @@ def load_fed_funds(path: Path | str = FED_FUNDS_PATH) -> pd.DataFrame:
         }
     )
     return out.dropna().sort_values("date").reset_index(drop=True)
+
+
+def _fred_csv_url(series_id: str, start: str = FRED_START) -> str:
+    return f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd={start}"
+
+
+def _fetch_fred_series(series_id: str, start: str = FRED_START) -> pd.DataFrame | None:
+    """Pull daily observations from FRED graph CSV; None if fetch fails."""
+    try:
+        return pd.read_csv(_fred_csv_url(series_id, start))
+    except Exception:
+        return None
+
+
+def _apply_fred_supplements(
+    df: pd.DataFrame,
+    *,
+    value_col: str,
+    series_id: str,
+) -> pd.DataFrame:
+    """Append known observations when FRED has not yet published them."""
+    out = df.copy()
+    for date_str, value in FRED_SUPPLEMENTS.get(series_id, []):
+        dt = pd.Timestamp(date_str)
+        if (out["date"] == dt).any():
+            continue
+        out = pd.concat(
+            [out, pd.DataFrame({"date": [dt], value_col: [value]})],
+            ignore_index=True,
+        )
+    return out.dropna(subset=[value_col]).sort_values("date").reset_index(drop=True)
+
+
+def _merge_fred_sources(
+    bundled: pd.DataFrame,
+    live_raw: pd.DataFrame | None,
+    *,
+    value_hints: tuple[str, ...],
+    value_col: str,
+    series_id: str,
+) -> pd.DataFrame:
+    """Merge bundled CSV, live FRED pull, and lag supplements (latest wins per date)."""
+    parts = [bundled]
+    if live_raw is not None and not live_raw.empty:
+        live = pd.DataFrame(
+            {
+                "date": _parse_date_column(live_raw),
+                value_col: _parse_value_column(live_raw, value_hints),
+            }
+        ).dropna()
+        parts.append(live)
+    merged = (
+        pd.concat(parts, ignore_index=True)
+        .drop_duplicates(subset=["date"], keep="last")
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    merged = _apply_fred_supplements(merged, value_col=value_col, series_id=series_id)
+    end = pd.Timestamp(PANEL_END)
+    return merged.loc[merged["date"] <= end].reset_index(drop=True)
+
+
+def load_fed_funds_latest(
+    path: Path | str = FED_FUNDS_PATH,
+    *,
+    refresh: bool = True,
+) -> pd.DataFrame:
+    """Fed funds: bundled CSV + optional live FRED refresh through PANEL_END."""
+    bundled = load_fed_funds(path)
+    live_raw = _fetch_fred_series("DFF") if refresh else None
+    return _merge_fred_sources(
+        bundled,
+        live_raw,
+        value_hints=("dff", "fed_funds", "rate", "value"),
+        value_col="fed_funds_pct",
+        series_id="DFF",
+    )
+
+
+def load_usdjpy_latest(
+    path: Path | str = USDJPY_SAMPLE_PATH,
+    *,
+    refresh: bool = True,
+) -> pd.DataFrame:
+    """USD/JPY: bundled CSV + optional live FRED refresh through PANEL_END."""
+    bundled = load_usdjpy(path)
+    live_raw = _fetch_fred_series("DEXJPUS") if refresh else None
+    return _merge_fred_sources(
+        bundled,
+        live_raw,
+        value_hints=("usd_jpy", "usdjpy", "dexjpus", "close", "price", "value"),
+        value_col="usd_jpy",
+        series_id="DEXJPUS",
+    )
 
 
 def load_usdjpy(source: Path | str | pd.DataFrame) -> pd.DataFrame:

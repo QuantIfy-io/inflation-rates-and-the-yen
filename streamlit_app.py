@@ -9,10 +9,11 @@ import streamlit as st
 from rate_history_engine import (
     BOJ_EVENTS,
     FED_FUNDS_PATH,
+    PANEL_END,
     USDJPY_SAMPLE_PATH,
     fed_policy_events_table,
-    load_fed_funds,
-    load_usdjpy,
+    load_fed_funds_latest,
+    load_usdjpy_latest,
     merge_rate_fx_panel,
     policy_event_study,
     realized_fx_vol,
@@ -21,6 +22,8 @@ from rate_history_engine import (
     summary_metrics,
     fitted_fx_from_spread,
 )
+
+BRIGHT_BLUE = "#1E90FF"
 
 st.set_page_config(
     page_title="Japan Rates & FX",
@@ -60,14 +63,14 @@ def _panel_layout(fig: go.Figure, title: str, *, show_legend: bool = True) -> go
     return fig
 
 
-@st.cache_data
+@st.cache_data(ttl=3600)
 def _load_fed_cached() -> "pd.DataFrame":
-    return load_fed_funds(FED_FUNDS_PATH)
+    return load_fed_funds_latest(FED_FUNDS_PATH)
 
 
-@st.cache_data
+@st.cache_data(ttl=3600)
 def _load_fred_fx_cached() -> "pd.DataFrame":
-    return load_usdjpy(USDJPY_SAMPLE_PATH)
+    return load_usdjpy_latest(USDJPY_SAMPLE_PATH)
 
 
 st.title("Japan Rates & FX")
@@ -88,7 +91,8 @@ USD/JPY still near **¥160** — US–Japan rate gap remains wide
 
 st.subheader("Rate differential vs USD/JPY")
 st.caption(
-    "USD/JPY: FRED `DEXJPUS` (bundled). Fed funds: FRED `DFF`. BoJ: official hike dates."
+    "USD/JPY: FRED `DEXJPUS` (live refresh + bundled). Fed funds: FRED `DFF`. "
+    f"Panel through **{PANEL_END}**."
 )
 
 try:
@@ -129,7 +133,7 @@ fig_main.add_trace(
         x=panel["date"],
         y=panel["spread_bps"],
         name="US−JP spread (bps)",
-        line=dict(color="#0a3161", width=2),
+        line=dict(color=BRIGHT_BLUE, width=2),
     ),
     secondary_y=False,
 )
@@ -188,7 +192,7 @@ fig_rates.add_trace(
         x=panel["date"],
         y=panel["fed_funds_pct"],
         name="Fed funds",
-        line=dict(color="#0a3161"),
+        line=dict(color=BRIGHT_BLUE),
     )
 )
 fig_rates.add_trace(
@@ -290,7 +294,7 @@ with study_l:
             x=panel["spread_bps"].iloc[order],
             y=fitted.iloc[order],
             mode="lines",
-            line=dict(color="#0a3161", width=2.5),
+            line=dict(color=BRIGHT_BLUE, width=2.5),
             name="Log-linear fit",
         )
     )
