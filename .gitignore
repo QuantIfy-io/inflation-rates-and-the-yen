@@ -1,0 +1,8 @@
+.venv/
+outputs/
+__pycache__/
+*.pyc
+.DS_Store
+linkedin-post.md
+study-plan.md
+app-concept.md
